@@ -1,0 +1,442 @@
+---
+title: "Factors Influening Life Expectancy"
+author: "Ezra Abah"
+date: "01/06/2021"
+output:
+  pdf_document: default
+---
+
+
+# 1.0 Problem Definition
+The World Health Organization (WHO) requires analysis to be carried out on data gathered of different countries from 2000 to 2015. The analysis needed to help them understand factors that affect life expectancy. In understanding these factor, recommendations can then be made to governments to help them improve life expectancy.
+
+# 2.0 Dataset and dataset preview
+The data set contains economic, health care, immunization data as well as other data. It contains 19 rows and 2,938 columns. This section imports the data and gives a general overview of it.
+
+```{r}
+# Import libraries required for analysis
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+# install.packages("zoo")   
+library(zoo)
+# Import data and save it in a dataframe "data"
+data <- read_csv ('life_expectancy.csv')
+```
+
+```{r}
+# Show top six rows
+head(data)
+```
+
+```{r}
+# Show bottom six rows
+tail(data)
+```
+```{r}
+str(data)
+```
+This shows that all 19 columns and some of their characteristics. It should be noted that it shows that all columns except two (country and status) are numerical. Measures will be taken to convert them to numerical values in preprocessing session.
+
+# 3.0 Data Cleaning and preprocessing
+
+## 3.1 Check and Removal of duplicate rows
+
+```{r}
+# Check and removal of duplicate rows
+## Check for duplicate rows(s)
+sum(duplicated(data))
+```
+There are no duplicate rows
+
+## 3.2 Check and handling of missing data
+To handle null values, Rows of null values from target variable "life_expectancy" ar all removed. 
+Rows of null values will also be removed for features with less than 5% null values as the removal will not severely reduce number of rows
+For features with null values greater than 5% but less than 30%, values will be estimated by interpolation of already available data. This is done using zoo library.
+With features with more than 30% null values, remove feature
+
+```{r}
+# Check and handling of missing data
+colSums(is.na(data))
+sum(is.na(data))
+```
+There are 2328 null entries. 
+
+
+Target variable, life_expectancy
+```{r}
+# find missing cells in life_expectancy column
+data[which(is.na(data$life_expectancy)),]
+
+```
+
+All 10 missing values of life expectancy and adult mortality are from 10 countries which data points are un-available for only one year. So we can remove these data points
+
+```{r}
+# find missing cells in life_expectancy column
+data <- filter(data, !is.na(life_expectancy))
+sum(is.na(data$life_expectancy))
+```
+
+```{r}
+# Check percentage of missing data per cell
+round((colSums(is.na(data))/nrow(data)*100),2)
+```
+Remove rows with missing values for bmi, polio, diptheria as they have less than 5% null values
+
+```{r}
+# Remove rows with empty life_expectancy cells
+data <- data %>%
+  filter(!is.na(bmi), !is.na(polio), !is.na(diphtheria))
+dim(data)
+sum(is.na(data))
+colSums(is.na(data))
+```
+
+```{r}
+
+data$alcohol=na.approx(data$alcohol) 
+data$hepatitis_b=na.approx(data$hepatitis_b) 
+data$total_expenditure=na.approx(data$total_expenditure)
+data$gdp=na.approx(data$gdp)
+data$population=na.approx(data$population)
+data$schooling=na.approx(data$schooling)
+
+```
+
+```{r}
+colSums(is.na(data))
+```
+No features have more than 30% null values
+
+
+## 3.3 Convert strings to numerical variables
+
+```{r}
+data$country <- as.factor(data$country)
+data$status <- as.factor(data$status)
+```
+
+
+## 3.4 Outlier handling
+```{r}
+#Outlier handling
+
+boxplot(life_expectancy~status,
+data=data,
+main="Life expectancy for developing and developed countries",
+xlab="Status",
+ylab="Life Expectancy",
+col="skyblue",
+border="black"
+)
+
+```
+
+```{r}
+#Outlier handling
+data <- data[data$life_expectancy > quantile(data$life_expectancy, .25) - 1.5*IQR(data$life_expectancy) & 
+               data$life_expectancy < quantile(data$life_expectancy, .75) + 1.5*IQR(data$life_expectancy), ]
+```
+
+```{r}
+#Outlier handling
+
+boxplot(life_expectancy~status,
+data=data,
+main="Life expectancy for developing and developed countries",
+xlab="Status",
+ylab="Life Expectancy",
+col="skyblue",
+border="black"
+)
+
+```
+
+
+```{r}
+# View dimension of data
+dim(data)
+```
+```{r}
+# Average life expectancy per year
+data %>%
+  group_by(year) %>%
+  summarise (average_life_expectancy = mean(life_expectancy, na.rm = TRUE))%>%
+  arrange(year) %>%
+  ggplot(aes(x=year, y= average_life_expectancy)) +
+  geom_point()+
+  geom_line(color='blue')+
+  ylim(60,75)
+```
+
+```{r}
+# 2015 Life expectancies, top 5
+data %>%
+  filter(year == 2015) %>%
+  top_n(5, life_expectancy) %>% 
+  arrange(desc(life_expectancy)) %>%
+  mutate(country= factor(country, levels = unique(country))) %>% 
+  ggplot(aes(country,life_expectancy)) +
+  geom_col(fill='#009904')+
+  ylim(0,90)
+```
+
+```{r}
+# 2015 Life expectancies, bottom 5
+data %>%
+  filter(year == 2015) %>%
+  top_n(-5, life_expectancy) %>% 
+  arrange(desc(life_expectancy)) %>%
+  mutate(country= factor(country, levels = unique(country))) %>% 
+  ggplot(aes(country,life_expectancy)) +
+  geom_col(fill='#d30000')+
+  ylim(0,90)
+```
+
+# 4.0 Exporatory Analysis
+## 4.1 Model Selection
+Backward selection is used for selecting the most appropriate model. 
+To start with, a final model is created using all potential variables after which elimination is done to remove less influential variables.
+The process is repeated till variable remaining after elimination all meet standard for neccessity ( P < 0.05)
+
+
+### Step 1: Full model creation
+```{r}
+data <- subset(data, select = -c(country, year))
+
+```
+
+```{r}
+full_model <- lm(life_expectancy ~ ., data = data)
+summary(full_model)
+```
+
+### Step 2: Elimination
+population is first to be eliminated as it is the least statistically significant and has a highest p-value of 0.193 which is greater than 0.05
+
+```{r}
+model_1 <- lm(life_expectancy ~ .-population, data = data)
+summary(model_1)
+```
+Percentage expenditure which is the least significant in this new model has a p-value of 0.188 which is greater than 0.05 so is eliminated
+```{r}
+model_2 <- lm(life_expectancy ~ .-population-percentage_expenditure, data = data)
+summary(model_2)
+
+```
+
+total expenditure which is the least significant in this new model has a p-value of 0.057 which is greater than 0.05 so is eliminated
+```{r}
+model_3 <- lm(life_expectancy ~ .-population-percentage_expenditure-total_expenditure, data = data)
+summary(model_3)
+
+```
+The largest p-value which  is "hepatitis_b" is less than 0.05, so we do not need to eliminate any predictors. The current model is the best-fitting model.
+Dropped variables include population, percentage_expenditure and total_expenditure
+
+```{r}
+# Plot of Residuals of final  model
+boxplot(model_3[['residuals']],main='Boxplot: Residuals',ylab='residual value')
+
+```
+
+## 4.2 Variable Analysis
+
+## 4.2.1 Levels of development
+```{r}
+# Status
+dev_data <- data %>%
+  group_by(status)%>%
+  summarise(
+    average_life = mean(life_expectancy, na.rm = TRUE)
+  ) 
+
+
+
+dev_data%>%
+  ggplot(aes(x=status, y= average_life)) +
+  geom_bar(stat='identity')
+
+```
+
+```{r}
+# View distribution of life expectanc for developed and developing countries
+
+ggplot(data) +
+  aes(x = life_expectancy, fill=status) +
+  geom_histogram(bins = 20, alpha=0.6, position='identity', aes(y = ..density..))
+```
+
+
+
+## 4.2.2 Mortality
+### 4.2.2.1 Infant Mortality
+```{r}
+# infant_mortality
+data %>%
+  ggplot() + 
+  aes(x = infant_deaths, y = life_expectancy) +
+  geom_point(stat='identity')+
+  geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+```
+
+
+```{r}
+```
+
+### 4.2.2.2 Under-five death
+
+```{r}
+# infant_mortality
+data %>%
+  ggplot() + 
+  aes(x = under_five_deaths, y = life_expectancy) +
+  geom_point(stat='identity')+
+  geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+```
+
+### 4.2.2.3 Adult mortality
+```{r}
+# Adult_mortality
+ggplot(data) +
+aes(x = adult_mortality, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+## 4.2.3 Death rate due to health condition
+### 4.2.3.1 Measles
+
+```{r}
+# Adult_mortality
+ggplot(data) +
+aes(x = measles, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+### 4.2.3.2 HIV/AIDS
+
+```{r}
+# Adult_mortality
+ggplot(data) +
+aes(x = hiv_aids, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+
+
+
+## 4.2.4 Immunisation
+### 4.2.4.1 Hepatitis B
+```{r}
+# Hepatitis B
+ggplot(data) +
+aes(x = hepatitis_b, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+### 4.2.4.2 Polio
+```{r}
+# Polio
+ggplot(data) +
+aes(x = polio, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+### 4.2.4.3 Diphtheria Tetanus Toxoid and Pertussis
+```{r}
+# Diphtheria
+ggplot(data) +
+aes(x = diphtheria, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+## 4.2.5 Alcohol
+
+```{r}
+# Adult_mortality
+ggplot(data) +
+aes(x = alcohol, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+### 4.2.6 Body mass index
+```{r}
+# Diphtheria
+ggplot(data) +
+aes(x = bmi, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+```{r}
+df <- 
+data %>%
+  mutate(
+    bmi_group = cut(bmi, 3, c('low', 'Moderate', 'high'))
+  )
+
+df %>%
+  filter(!is.na(bmi_group)) %>%
+  group_by(bmi_group) %>%
+  summarise(
+    average_life_expectancy = mean(life_expectancy, na.rm = TRUE)
+  ) 
+```
+
+## 4.2.7 Gross Domestic product (GDP)
+```{r}
+# GDP
+ggplot(data) +
+aes(x = gdp, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+
+```
+
+## 4.2.8 Schooling
+
+```{r}
+# Schooling
+ggplot(data) +
+aes(x = schooling, y = life_expectancy) +
+geom_point(alpha = 0.4)+
+geom_smooth(method = "lm",formula = y ~ x, se = FALSE)
+```
+
+```{r}
+df <- 
+data %>%
+  mutate(
+    school_group = cut(schooling, 3, c('low', 'Moderate', 'high'))
+  )
+
+df %>%
+  filter(!is.na(school_group)) %>%
+  group_by(school_group) %>%
+  summarise(
+    average_life_expectancy = mean(life_expectancy, na.rm = TRUE)
+  ) 
+```
+
+
+
+
+
+
+
+
